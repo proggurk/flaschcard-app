@@ -1,0 +1,34 @@
+# Render "Blueprint": tells Render how to build and run the app.
+# One web service runs the API and serves the built app from dist/.
+# Values marked `sync: false` are secrets: Render asks for them when you
+# create the service, and they never go in this file or in Git.
+services:
+  - type: web
+    name: flashcards
+    runtime: node
+    plan: free
+    region: frankfurt # same region as the Neon database (eu-central-1)
+    # --include=dev: NODE_ENV=production would otherwise skip the build tools (vite, tsx)
+    buildCommand: npm ci --include=dev && npm run build && npm ci --include=dev --prefix server
+    startCommand: npm start --prefix server
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Render's proxy sits in front of the server; use the client IP it forwards
+      - key: TRUST_PROXY
+        value: "true"
+      # The app's public address, e.g. https://flashcards.example.com
+      - key: CLIENT_ORIGIN
+        sync: false
+      # Copy these from the project-root .env.local
+      - key: DATABASE_URL
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_ENDPOINT_URL_S3
+        sync: false
+      - key: AWS_REGION
+        sync: false
