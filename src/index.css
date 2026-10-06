@@ -764,11 +764,12 @@ button.row:disabled { opacity: 0.4; }
   transition: transform 0.12s;
 }
 .rating:active { transform: scale(0.95); }
+.ratings.two { grid-template-columns: 1fr 1fr; gap: 10px; }
+.ratings.two .rating { height: 64px; font-size: 17px; }
+.rating > span { display: inline-flex; align-items: center; gap: 6px; }
 .rating small { font-size: 12px; font-weight: 500; opacity: 0.8; }
 .rating.again { background: var(--red-tint); color: var(--red); }
-.rating.hard { background: var(--orange-tint); color: var(--orange); }
 .rating.good { background: var(--green-tint); color: var(--accent); }
-.rating.easy { background: var(--blue-tint); color: var(--blue); }
 
 .done {
   flex: 1;

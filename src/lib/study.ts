@@ -5,7 +5,7 @@ import { DAY_MS, studyDayStart } from './days.ts'
 import { schedule, newCardState, type CardState, type Rating } from '../../shared/srs.ts'
 import type { SyncCard, SyncDeck, SyncDeckUpload, SyncProgress } from '../../shared/sync-types.ts'
 
-// Same defaults as Anki. Cards you're re-learning (answered "Again") don't count
+// Same defaults as Anki. Cards you're re-learning (answered "Don't know") don't count
 // towards either limit: they always come back the same day.
 export const NEW_CARDS_PER_DAY = 20
 export const REVIEWS_PER_DAY = 200
@@ -20,7 +20,7 @@ export interface DeckSummary {
   deck: SyncDeck
   total: number
   new: number      // new cards you can still start today
-  learning: number // answered "Again", due again now
+  learning: number // answered "Don't know", due again now
   due: number      // reviews due now (within today's limit)
   unseen: number   // new cards never studied, ignoring the daily limit
   newLimitReached: boolean
@@ -64,7 +64,7 @@ async function loadDeck(deckId: string, now: number) {
   const fresh: StudyCard[] = []
   let nextDueAt: number | null = null
   // Like Anki, a review card scheduled for some day is due all that day, not
-  // from the exact minute. Re-learning cards ("Again", 10 min) use the exact time.
+  // from the exact minute. Re-learning cards ("Don't know") use the exact time.
   const endOfToday = studyDayStart(now) + DAY_MS
 
   for (const card of cards) {

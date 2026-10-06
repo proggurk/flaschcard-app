@@ -47,7 +47,7 @@ export default function StatsScreen({ deckId, title, back }: { deckId: string | 
   const past: Column[] = stats.last14Days.map((d) => ({
     label: String(dayDate(d.day).getDate()),
     title: dayTitle(d.day),
-    values: [d.reviews - d.again, d.again],
+    values: [d.reviews - d.forgot, d.forgot],
   }))
   const next: Column[] = stats.dueNext7Days.map((d, i) => ({
     label: i === 0 ? 'Today' : dayDate(d.day).toLocaleDateString('en-GB', { weekday: 'short' }),

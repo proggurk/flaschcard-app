@@ -31,7 +31,7 @@ async function makeDeck(cardCount: number) {
 }
 
 // Answer every card in the queue with `rating`, one second apart
-async function studyAll(deckId: string, now: number, rating: Rating = Rating.Good) {
+async function studyAll(deckId: string, now: number, rating: Rating = Rating.Know) {
   const { queue } = await study.getStudyQueue(deckId, now)
   for (const [i, item] of queue.entries()) {
     await study.rateCard(item.card.id, rating, now + i * 1000, now + i * 1000 + 500)
@@ -59,27 +59,30 @@ describe('daily limits', () => {
     expect(summary).toMatchObject({ new: 0, learning: 0, due: 0, unseen: 10, newLimitReached: true })
   })
 
-  test('"Again" cards come back the same day without using up the limit', async () => {
+  test("cards you don't know stay in the queue until known, without using up the limit", async () => {
     const deckId = await makeDeck(30)
     const { queue } = await study.getStudyQueue(deckId, NOON)
-    await study.rateCard(queue[0].card.id, Rating.Again, NOON, NOON + 1000)
+    await study.rateCard(queue[0].card.id, Rating.DontKnow, NOON, NOON + 1000)
 
-    // Right away: the forgotten card isn't due yet; 19 new cards left today
+    // Still due right away (it counts as one of today's 20 new cards): 1 to retry + 19 new
     const now = await study.getStudyQueue(deckId, NOON + 2000)
-    expect(now.queue.map((c) => c.card.front)).not.toContain('Q0')
-    expect(now.queue).toHaveLength(19)
+    expect(now.queue[0].card.front).toBe('Q0')
+    expect(now.queue).toHaveLength(20)
 
-    // 10 minutes later it's back, at the front of the queue
-    const soon = await study.getStudyQueue(deckId, NOON + 11 * MIN)
-    expect(soon.queue[0].card.front).toBe('Q0')
-    expect(soon.queue).toHaveLength(20)
+    // Knowing it finishes it for today: due tomorrow
+    await study.rateCard(queue[0].card.id, Rating.Know, NOON + 3000, NOON + 4000)
+    const after = await study.getStudyQueue(deckId, NOON + 5000)
+    expect(after.queue.map((c) => c.card.front)).not.toContain('Q0')
+    expect(after.queue).toHaveLength(19)
+    expect((await study.getStudyQueue(deckId, NOON + 1000 + 24 * 60 * MIN)).queue[0].card.front).toBe('Q0')
   })
 
-  test('the next day brings reviews plus the next new cards', async () => {
+  test('four days later brings reviews plus the next new cards', async () => {
     const deckId = await makeDeck(30)
-    await studyAll(deckId, NOON) // 20 new cards answered "Good" => due in 1 day
+    await studyAll(deckId, NOON) // 20 new cards answered "Know" => due in 4 days
 
-    const { queue } = await study.getStudyQueue(deckId, NOON + DAY)
+    expect((await study.getStudyQueue(deckId, NOON + 3 * DAY)).queue.filter((c) => !c.isNew)).toHaveLength(0)
+    const { queue } = await study.getStudyQueue(deckId, NOON + 4 * DAY)
     const reviews = queue.filter((c) => !c.isNew)
     const fresh = queue.filter((c) => c.isNew)
     expect(reviews).toHaveLength(20)
@@ -99,24 +102,26 @@ describe('daily limits', () => {
 describe('statistics', () => {
   test('counts today\'s work, card stages and streak', async () => {
     const deckId = await makeDeck(30)
-    // Day 1: 20 new cards, one forgotten
+    // Day 1: 20 new cards known, then one of them forgotten (and left unfinished)
     const day1 = await studyAll(deckId, NOON - DAY)
-    await study.rateCard(day1[0].card.id, Rating.Again, null, NOON - DAY + 30 * MIN)
-    // Day 2 (today): review everything due
+    await study.rateCard(day1[0].card.id, Rating.DontKnow, null, NOON - DAY + 30 * MIN)
+    // Day 2 (today): the forgotten card plus 10 new ones, all known
     await studyAll(deckId, NOON)
 
     const s = await stats.getStats(deckId, NOON + 60 * MIN)
     expect(s.cards).toEqual({ total: 30, unseen: 0, learning: 0, young: 30, mature: 0 })
     expect(s.today.newCards).toBe(10)
-    expect(s.today.cards).toBe(30) // 20 reviews + 10 new
-    expect(s.today.reviews).toBe(30)
+    expect(s.today.cards).toBe(11) // 1 relearned + 10 new
+    expect(s.today.reviews).toBe(11)
     expect(s.today.correctRate).toBe(1)
     expect(s.streakDays).toBe(2)
-    expect(s.allTime.reviews).toBe(20 + 1 + 30)
+    expect(s.allTime.reviews).toBe(20 + 1 + 11)
     expect(s.allTime.daysStudied).toBe(2)
-    // Retention counts only cards seen on an earlier day: 20 reviews today, all remembered
+    // Retention counts only cards seen on an earlier day: the relearned card, known
     expect(s.retention30d).toBe(1)
-    expect(s.today.timeMs).toBe(30 * 500)
+    expect(s.today.timeMs).toBe(11 * 500)
+    // Yesterday had one "Don't know" out of 21 answers
+    expect(s.last14Days.at(-2)).toMatchObject({ reviews: 21, forgot: 1 })
   })
 
   test('streak survives until you study today', async () => {
@@ -128,13 +133,13 @@ describe('statistics', () => {
 })
 
 describe('exams', () => {
-  // Study "Good" every day for 23 days. Intervals go 1, 6, 15, 38 days, so the
-  // first 20 cards (started day 0) reach 38 days (mature) on day 22; the last
-  // 10 (started day 1) would need day 23, so they're still young.
+  // Study "Know" every day for 15 days. Intervals go 4, 10, 25 days, so the
+  // first 20 cards (started day 0) reach 25 days (mature) on day 14; the last
+  // 10 (started day 1) would need day 15, so they're still young.
   async function deckWithHistory() {
     const deckId = await makeDeck(30)
     let t = NOON
-    for (let day = 0; day < 23; day++) {
+    for (let day = 0; day < 15; day++) {
       t = NOON + day * DAY
       await studyAll(deckId, t)
     }

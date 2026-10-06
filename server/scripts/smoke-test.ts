@@ -85,13 +85,15 @@ try {
   // ---- Both study card A "offline", interleaved in time ----
   const t0 = Date.now() - 10 * DAY_MS
   const laptopReviews = [
-    { id: randomUUID(), cardId: cardA, rating: Rating.Good, durationMs: 3000, reviewedAt: t0 },
-    { id: randomUUID(), cardId: cardA, rating: Rating.Good, durationMs: 2000, reviewedAt: t0 + 2 * DAY_MS },
+    { id: randomUUID(), cardId: cardA, rating: Rating.Know, durationMs: 3000, reviewedAt: t0 },
+    { id: randomUUID(), cardId: cardA, rating: Rating.Know, durationMs: 2000, reviewedAt: t0 + 2 * DAY_MS },
   ]
   const phoneReviews = [
-    { id: randomUUID(), cardId: cardA, rating: Rating.Hard, durationMs: 5000, reviewedAt: t0 + 1 * DAY_MS },
+    { id: randomUUID(), cardId: cardA, rating: Rating.DontKnow, durationMs: 5000, reviewedAt: t0 + 1 * DAY_MS },
+    // A phone still running the old four-button app sends "Hard" (2): must still be accepted
+    { id: randomUUID(), cardId: cardA, rating: 2 as const, durationMs: 4000, reviewedAt: t0 + 1 * DAY_MS + 60_000 },
   ]
-  const foreignReview = { id: randomUUID(), cardId: randomUUID(), rating: Rating.Good, durationMs: null, reviewedAt: t0 }
+  const foreignReview = { id: randomUUID(), cardId: randomUUID(), rating: Rating.Know, durationMs: null, reviewedAt: t0 }
 
   // What the merged history *should* produce, in time order
   let expected: CardState = newCardState(t0)
@@ -228,7 +230,7 @@ try {
 
   // One fresh review so the 7-day board has something to rank
   await laptop('POST', '/api/sync', { cursor: null, decks: [], reviews: [
-    { id: randomUUID(), cardId: cardB, rating: Rating.Good, durationMs: 1000, reviewedAt: Date.now() },
+    { id: randomUUID(), cardId: cardB, rating: Rating.Know, durationMs: 1000, reviewedAt: Date.now() },
   ] })
   r = await friend('GET', '/api/social/leaderboard?scope=friends&metric=reviews7d')
   assert.deepEqual(r.body.entries.map((e: { username: string, value: number }) => [e.username, e.value]), [[myName, 1], [friendName, 0]])

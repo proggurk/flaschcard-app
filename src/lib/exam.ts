@@ -83,7 +83,7 @@ export async function saveExamResult(exam: SyncExam) {
 
 // Optional after an exam: treat missed cards as forgotten, so they're re-learned
 export async function relearnCards(cardIds: string[]) {
-  for (const id of cardIds) await rateCard(id, Rating.Again, null)
+  for (const id of cardIds) await rateCard(id, Rating.DontKnow, null)
 }
 
 export async function getExamHistory(deckId: string | null): Promise<SyncExam[]> {

@@ -2,7 +2,7 @@
 // sync includes reviews from all your devices), so they work offline too.
 import { getDB } from './db.ts'
 import { studyDayKey, studyDayStart, studyDayStartDaysAgo } from './days.ts'
-import { Rating } from '../../shared/srs.ts'
+import { knew } from '../../shared/srs.ts'
 
 export const MATURE_DAYS = 21 // Anki calls a card "mature" once its interval is 3+ weeks
 
@@ -19,12 +19,12 @@ export interface Stats {
     cards: number        // different cards studied
     newCards: number     // cards seen for the first time
     timeMs: number
-    correctRate: number | null // share of answers that weren't "Again"
+    correctRate: number | null // share of answers that were "Know"
   }
   allTime: { reviews: number, timeMs: number, daysStudied: number }
   streakDays: number
   retention30d: number | null // of cards you'd seen before, how often you remembered them (last 30 days)
-  last14Days: { day: string, reviews: number, again: number }[] // again = answers that were "Again" (forgotten)
+  last14Days: { day: string, reviews: number, forgot: number }[] // forgot = "Don't know" answers
   dueNext7Days: { day: string, cards: number }[] // today includes anything overdue
 }
 
@@ -60,15 +60,15 @@ export async function getStats(deckId: string | null, now = Date.now()): Promise
     cards: new Set(todays.map((r) => r.cardId)).size,
     newCards: [...firstSeen.values()].filter((t) => t >= dayStart).length,
     timeMs: sum(todays.map((r) => r.durationMs ?? 0)),
-    correctRate: todays.length ? todays.filter((r) => r.rating !== Rating.Again).length / todays.length : null,
+    correctRate: todays.length ? todays.filter((r) => knew(r.rating)).length / todays.length : null,
   }
 
   const perDay = new Map<string, number>()
-  const againPerDay = new Map<string, number>()
+  const forgotPerDay = new Map<string, number>()
   for (const r of reviews) {
     const key = studyDayKey(r.reviewedAt)
     perDay.set(key, (perDay.get(key) ?? 0) + 1)
-    if (r.rating === Rating.Again) againPerDay.set(key, (againPerDay.get(key) ?? 0) + 1)
+    if (!knew(r.rating)) forgotPerDay.set(key, (forgotPerDay.get(key) ?? 0) + 1)
   }
 
   // Streak: consecutive days with reviews, ending today (or yesterday, if you haven't studied yet today)
@@ -80,11 +80,11 @@ export async function getStats(deckId: string | null, now = Date.now()): Promise
   // Retention: answers on cards you'd already seen on an earlier day, in the last 30 days
   const since = studyDayStartDaysAgo(now, 30)
   const recall = reviews.filter((r) => r.reviewedAt >= since && studyDayKey(firstSeen.get(r.cardId)!) !== studyDayKey(r.reviewedAt))
-  const retention30d = recall.length ? recall.filter((r) => r.rating !== Rating.Again).length / recall.length : null
+  const retention30d = recall.length ? recall.filter((r) => knew(r.rating)).length / recall.length : null
 
   const last14Days = Array.from({ length: 14 }, (_, i) => {
     const day = studyDayKey(studyDayStartDaysAgo(now, 13 - i))
-    return { day, reviews: perDay.get(day) ?? 0, again: againPerDay.get(day) ?? 0 }
+    return { day, reviews: perDay.get(day) ?? 0, forgot: forgotPerDay.get(day) ?? 0 }
   })
 
   // ---- Forecast ----
