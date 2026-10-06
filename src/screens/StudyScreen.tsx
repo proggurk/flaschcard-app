@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { getStudyQueue, rateCard, NEW_CARDS_PER_DAY, type StudyCard } from '../lib/study.ts'
 import { schedule, Rating } from '../../shared/srs.ts'
 import { formatInterval, formatWhen } from '../lib/format.ts'
@@ -6,6 +6,7 @@ import CardHtml from '../components/CardHtml.tsx'
 import { useNav } from '../ui/nav.ts'
 import { useLoad } from '../ui/hooks.ts'
 import Icon from '../ui/icons.tsx'
+import SwipeCard, { type SwipeControls } from '../ui/SwipeCard.tsx'
 
 // A card you didn't know comes back after this many other cards (or straight
 // away if nothing else is left): the session isn't over until you know it.
@@ -42,13 +43,17 @@ export default function StudyScreen({ deckId }: { deckId: string }) {
     setRound((r) => r + 1)
   }
 
+  // Once the answer shows: swipe right = know, left = don't know. The buttons
+  // and keys send the card off the same way.
+  const swipe = useRef<SwipeControls>(null)
+
   // Keyboard: space/enter flips; then 1 or ← = don't know, 2 or → = know; escape closes
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') nav.back()
       else if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip() }
-      else if (flipped && (e.key === '1' || e.key === 'ArrowLeft')) void answer(Rating.DontKnow)
-      else if (flipped && (e.key === '2' || e.key === 'ArrowRight')) void answer(Rating.Know)
+      else if (flipped && !busy && (e.key === '1' || e.key === 'ArrowLeft')) swipe.current?.fly('left')
+      else if (flipped && !busy && (e.key === '2' || e.key === 'ArrowRight')) swipe.current?.fly('right')
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -71,35 +76,42 @@ export default function StudyScreen({ deckId }: { deckId: string }) {
       {session && current && (
         <>
           <div className="flashcard-area">
-            <div key={current.card.id} className={`flashcard${flipped ? ' flipped' : ''}`} onClick={flip}
-              role="button" aria-label={flipped ? 'Answer side. Tap to see the question' : 'Tap to show the answer'}>
-              <div className="face">
-                <span className="face-label">
-                  {current.isNew ? 'New card' : missedAt[current.card.id] !== undefined ? 'Try again' : 'Question'}
-                </span>
-                <CardHtml html={current.card.front} />
-                {!flipped && <p className="tap-hint">Tap to show the answer</p>}
+            {/* The next card peeking out underneath, so it feels like a deck */}
+            {remaining > 1 && <div className="card-behind" aria-hidden="true" />}
+            {/* Keyed by round too: a card you missed can come back as a fresh element */}
+            <SwipeCard key={`${current.card.id}-${session.round}`} controls={swipe} enabled={flipped && !busy}
+              onSwipe={(direction) => void answer(direction === 'right' ? Rating.Know : Rating.DontKnow)}>
+              <div className={`flashcard${flipped ? ' flipped' : ''}`} onClick={flip}
+                role="button" aria-label={flipped ? 'Answer side. Tap to see the question' : 'Tap to show the answer'}>
+                <div className="face">
+                  <span className="face-label">
+                    {current.isNew ? 'New card' : missedAt[current.card.id] !== undefined ? 'Try again' : 'Question'}
+                  </span>
+                  <CardHtml html={current.card.front} />
+                  {!flipped && <p className="tap-hint">Tap to show the answer</p>}
+                </div>
+                <div className="face back">
+                  <span className="face-label">Answer</span>
+                  {/* Only rendered once flipped, so audio on the answer doesn't give it away.
+                      Anki answers usually repeat the question ({{FrontSide}}); our own cards don't, so add it. */}
+                  {flipped && current.card.ankiNoteId === null && (
+                    <><div className="face-question"><CardHtml html={current.card.front} /></div><hr className="face-divider" /></>
+                  )}
+                  {flipped && <CardHtml html={current.card.back} />}
+                  {flipped && answered < 3 && <p className="tap-hint">Swipe right if you knew it, left if you didn't</p>}
+                </div>
               </div>
-              <div className="face back">
-                <span className="face-label">Answer</span>
-                {/* Only rendered once flipped, so audio on the answer doesn't give it away.
-                    Anki answers usually repeat the question ({{FrontSide}}); our own cards don't, so add it. */}
-                {flipped && current.card.ankiNoteId === null && (
-                  <><div className="face-question"><CardHtml html={current.card.front} /></div><hr className="face-divider" /></>
-                )}
-                {flipped && <CardHtml html={current.card.back} />}
-              </div>
-            </div>
+            </SwipeCard>
           </div>
 
           <div className="answer-bar">
             {flipped ? (
               <div className="ratings two">
-                <button className="rating again" disabled={busy} onClick={() => void answer(Rating.DontKnow)}>
+                <button className="rating again" disabled={busy} onClick={() => swipe.current?.fly('left')}>
                   <span><Icon name="close" size={18} weight={2.8} />Don't know</span>
                   <small>Again in a moment</small>
                 </button>
-                <button className="rating good" disabled={busy} onClick={() => void answer(Rating.Know)}>
+                <button className="rating good" disabled={busy} onClick={() => swipe.current?.fly('right')}>
                   <span><Icon name="check" size={18} weight={2.8} />Know</span>
                   {/* When you'd see the card again */}
                   <small>Next in {formatInterval(schedule(current.state, Rating.Know, session.shownAt).dueAt - session.shownAt)}</small>

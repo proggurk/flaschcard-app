@@ -60,6 +60,8 @@
 *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
 html, body, #root { height: 100%; }
+/* No browser swipe-to-go-back on sideways swipes (the study card uses them) */
+html { overscroll-behavior-x: none; }
 
 body {
   margin: 0;
@@ -703,12 +705,57 @@ button.row:disabled { opacity: 0.4; }
 .session-count { min-width: 28px; text-align: right; font-size: 15px; font-weight: 600; color: var(--label-2); font-variant-numeric: tabular-nums; }
 
 .flashcard-area {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
-  padding: 8px var(--gutter) 16px;
-  perspective: 1400px;
+  padding: 8px var(--gutter) 22px;
 }
+/* The card you drag (src/ui/useSwipeCard.ts moves it). --swipe goes from
+   -1 (dragged fully left) to 1 (fully right) and fades the stamps in. */
+.swipe {
+  --swipe: 0;
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: flex;
+  perspective: 1400px;
+  touch-action: pan-y; /* vertical scrolling in long cards still works */
+  will-change: transform;
+  /* Rises out of the stack underneath. "backwards": once done, the swipe owns transform */
+  animation: card-rise 0.38s var(--ease-ios) backwards;
+}
+@keyframes card-rise { from { transform: translateY(12px) scale(0.93); } }
+/* Dragging the card must not select its text */
+.swipe .card-html { -webkit-user-select: none; user-select: none; }
+.card-behind {
+  position: absolute;
+  top: 8px;
+  bottom: 22px;
+  left: var(--gutter);
+  right: var(--gutter);
+  border-radius: 24px;
+  background: #18181b;
+  border: 0.5px solid var(--separator);
+  transform-origin: 50% 100%;
+  transform: translateY(12px) scale(0.93);
+}
+.stamp {
+  position: absolute;
+  top: 30px;
+  z-index: 2;
+  padding: 4px 12px;
+  border: 3px solid;
+  border-radius: 10px;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  background: var(--surface);
+  pointer-events: none;
+}
+.stamp.know { left: 22px; color: var(--accent); transform: rotate(-12deg); opacity: clamp(0, var(--swipe), 1); }
+.stamp.dont { right: 22px; color: var(--red); transform: rotate(12deg); opacity: clamp(0, calc(var(--swipe) * -1), 1); }
 .flashcard {
   position: relative;
   flex: 1;
