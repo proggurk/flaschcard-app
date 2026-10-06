@@ -1,110 +1,120 @@
-import { useEffect, useState, type CSSProperties } from 'react'
-import { getStudyQueue, rateCard, NEW_CARDS_PER_DAY, type StudyCard } from '../lib/study.ts'
+import { useEffect, useState } from 'react'
+import { getStudyQueue, rateCard, NEW_CARDS_PER_DAY } from '../lib/study.ts'
 import { schedule, Rating } from '../../shared/srs.ts'
 import { formatInterval, formatWhen } from '../lib/format.ts'
 import CardHtml from '../components/CardHtml.tsx'
+import { useNav } from '../ui/nav.ts'
+import { useLoad } from '../ui/hooks.ts'
+import Icon from '../ui/icons.tsx'
 
 const BUTTONS = [
-  { rating: Rating.Again, label: 'Again' },
-  { rating: Rating.Hard, label: 'Hard' },
-  { rating: Rating.Good, label: 'Good' },
-  { rating: Rating.Easy, label: 'Easy' },
+  { rating: Rating.Again, label: 'Again', className: 'again' },
+  { rating: Rating.Hard, label: 'Hard', className: 'hard' },
+  { rating: Rating.Good, label: 'Good', className: 'good' },
+  { rating: Rating.Easy, label: 'Easy', className: 'easy' },
 ] as const
 
-interface Session {
-  queue: StudyCard[]
-  shownAt: number // when the current card appeared
-  nextDueAt: number | null
-  newLimitReached: boolean
-}
-
-export default function StudyScreen({ deckId, onExit }: { deckId: string, onExit: () => void }) {
-  const [session, setSession] = useState<Session | null>(null)
-  const [isFlipped, setIsFlipped] = useState(false)
+export default function StudyScreen({ deckId }: { deckId: string }) {
+  const nav = useNav()
   const [round, setRound] = useState(0) // bumped after each answer to reload the queue
+  const [flippedRound, setFlippedRound] = useState<number | null>(null)
+  const [answered, setAnswered] = useState(0)
 
-  useEffect(() => {
-    let alive = true
-    void getStudyQueue(deckId).then((q) => {
-      if (alive) setSession({ ...q, shownAt: Date.now() })
-    })
-    return () => { alive = false }
-  }, [deckId, round])
+  const session = useLoad(async () => ({ ...(await getStudyQueue(deckId)), round, shownAt: Date.now() }), [deckId, round])
 
-  async function answer(card: StudyCard, rating: Rating, shownAt: number) {
-    await rateCard(card.card.id, rating, shownAt)
-    setIsFlipped(false)
+  // The card stays flipped until the next one has loaded, so the next card's
+  // answer never shows during the flip-back animation
+  const current = session?.queue[0]
+  const flipped = session !== undefined && flippedRound === session.round
+  const busy = session?.round !== round
+
+  function flip() {
+    if (session && !busy) setFlippedRound(flipped ? null : session.round)
+  }
+
+  async function answer(rating: Rating) {
+    if (!session || !current || busy) return
+    await rateCard(current.card.id, rating, session.shownAt)
+    setAnswered((n) => n + 1)
     setRound((r) => r + 1)
   }
 
-  if (session === null) return <p>Loading…</p>
+  // Keyboard: space/enter flips, 1-4 answer, escape closes
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') nav.back()
+      else if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip() }
+      else if (flipped && ['1', '2', '3', '4'].includes(e.key)) void answer(Number(e.key) as Rating)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 
-  const current = session.queue[0]
-  if (!current) {
-    return (
-      <div style={{ textAlign: 'center' }}>
-        <h2>All done for now! 🎉</h2>
-        {session.newLimitReached && <p>You've had today's {NEW_CARDS_PER_DAY} new cards. More tomorrow!</p>}
-        {session.nextDueAt && <p>Next card is due {formatWhen(session.nextDueAt)}.</p>}
-        <button onClick={onExit}>Back</button>
-      </div>
-    )
-  }
+  const remaining = session?.queue.length ?? 0
+  const progress = answered + remaining === 0 ? 1 : answered / (answered + remaining)
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-      <div style={{ alignSelf: 'stretch', display: 'flex', justifyContent: 'space-between' }}>
-        <button onClick={onExit}>← Back</button>
-        <span style={{ fontSize: 13, color: '#666' }}>
-          {session.queue.length} left{current.isNew && ' · new card'}
-        </span>
-      </div>
-
-      <div onClick={() => setIsFlipped(!isFlipped)}
-        style={{ width: '100%', maxWidth: 420, height: 340, perspective: 1000, cursor: 'pointer', marginTop: 24 }}>
-        <div style={{
-          width: '100%', height: '100%', position: 'relative',
-          transition: 'transform 0.6s ease-in-out', transformStyle: 'preserve-3d',
-          transform: isFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)',
-        }}>
-          <div style={{ ...faceStyle, backgroundColor: '#ffffff' }}>
-            <CardHtml html={current.card.front} />
-          </div>
-          <div style={{ ...faceStyle, backgroundColor: '#f0fdf4', transform: 'rotateY(180deg)' }}>
-            {/* Only render the back once flipped, so audio on the answer doesn't give it away */}
-            {isFlipped && <CardHtml html={current.card.back} />}
-          </div>
+    <div className="fullscreen">
+      <div className="session-bar">
+        <button className="icon-btn" onClick={nav.back} aria-label="Close"><Icon name="close" size={24} /></button>
+        <div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}>
+          <div className="progress-fill" style={{ width: `${progress * 100}%` }} />
         </div>
+        <span className="session-count" aria-label={`${remaining} cards left`}>{session ? remaining : ''}</span>
       </div>
 
-      <p style={{ color: '#888', fontSize: 14 }}>(Click the card to flip it)</p>
+      {session && current && (
+        <>
+          <div className="flashcard-area">
+            <div key={current.card.id} className={`flashcard${flipped ? ' flipped' : ''}`} onClick={flip}
+              role="button" aria-label={flipped ? 'Answer side. Tap to see the question' : 'Tap to show the answer'}>
+              <div className="face">
+                <span className="face-label">{current.isNew ? 'New card' : 'Question'}</span>
+                <CardHtml html={current.card.front} />
+                {!flipped && <p className="tap-hint">Tap to show the answer</p>}
+              </div>
+              <div className="face back">
+                <span className="face-label">Answer</span>
+                {/* Only rendered once flipped, so audio on the answer doesn't give it away.
+                    Anki answers usually repeat the question ({{FrontSide}}); our own cards don't, so add it. */}
+                {flipped && current.card.ankiNoteId === null && (
+                  <><div className="face-question"><CardHtml html={current.card.front} /></div><hr className="face-divider" /></>
+                )}
+                {flipped && <CardHtml html={current.card.back} />}
+              </div>
+            </div>
+          </div>
 
-      <div style={{
-        display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center',
-        opacity: isFlipped ? 1 : 0, transition: 'opacity 0.4s', pointerEvents: isFlipped ? 'auto' : 'none',
-      }}>
-        {BUTTONS.map(({ rating, label }) => (
-          <button key={rating} style={btnStyle} onClick={() => void answer(current, rating, session.shownAt)}>
-            {label}
-            {/* When you'd see the card again with this answer */}
-            <small style={{ display: 'block', color: '#888' }}>
-              {formatInterval(schedule(current.state, rating, session.shownAt).dueAt - session.shownAt)}
-            </small>
-          </button>
-        ))}
-      </div>
+          <div className="answer-bar">
+            {flipped ? (
+              <div className="ratings">
+                {BUTTONS.map(({ rating, label, className }) => (
+                  <button key={rating} className={`rating ${className}`} disabled={busy} onClick={() => void answer(rating)}>
+                    {label}
+                    {/* When you'd see the card again with this answer */}
+                    <small>{formatInterval(schedule(current.state, rating, session.shownAt).dueAt - session.shownAt)}</small>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <button className="btn btn-secondary" style={{ height: 60 }} onClick={flip}>Show answer</button>
+            )}
+          </div>
+        </>
+      )}
+
+      {session && !current && (
+        <div className="done">
+          <div className="done-badge"><Icon name="check" size={48} weight={3} /></div>
+          <h2 style={{ fontSize: 28, fontWeight: 700 }}>All done for now!</h2>
+          <p className="empty-text">
+            {answered > 0 && `You answered ${answered} ${answered === 1 ? 'card' : 'cards'}. `}
+            {session.newLimitReached && `You've had today's ${NEW_CARDS_PER_DAY} new cards. `}
+            {session.nextDueAt && `Next card is due ${formatWhen(session.nextDueAt)}.`}
+          </p>
+          <button className="btn btn-primary" style={{ marginTop: 24, maxWidth: 280 }} onClick={nav.back}>Done</button>
+        </div>
+      )}
     </div>
   )
-}
-
-const faceStyle: CSSProperties = {
-  position: 'absolute', width: '100%', height: '100%', backfaceVisibility: 'hidden',
-  display: 'flex', flexDirection: 'column', justifyContent: 'safe center', borderRadius: 16,
-  border: '2px solid #ccc', boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-  textAlign: 'center', padding: 20, boxSizing: 'border-box', overflowY: 'auto',
-}
-
-const btnStyle: CSSProperties = {
-  padding: '10px 16px', fontSize: 16, borderRadius: 8,
-  border: '1px solid #ccc', cursor: 'pointer', backgroundColor: '#fff',
 }

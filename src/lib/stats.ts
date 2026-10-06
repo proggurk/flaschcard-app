@@ -24,7 +24,7 @@ export interface Stats {
   allTime: { reviews: number, timeMs: number, daysStudied: number }
   streakDays: number
   retention30d: number | null // of cards you'd seen before, how often you remembered them (last 30 days)
-  last14Days: { day: string, reviews: number }[]
+  last14Days: { day: string, reviews: number, again: number }[] // again = answers that were "Again" (forgotten)
   dueNext7Days: { day: string, cards: number }[] // today includes anything overdue
 }
 
@@ -64,9 +64,11 @@ export async function getStats(deckId: string | null, now = Date.now()): Promise
   }
 
   const perDay = new Map<string, number>()
+  const againPerDay = new Map<string, number>()
   for (const r of reviews) {
     const key = studyDayKey(r.reviewedAt)
     perDay.set(key, (perDay.get(key) ?? 0) + 1)
+    if (r.rating === Rating.Again) againPerDay.set(key, (againPerDay.get(key) ?? 0) + 1)
   }
 
   // Streak: consecutive days with reviews, ending today (or yesterday, if you haven't studied yet today)
@@ -82,7 +84,7 @@ export async function getStats(deckId: string | null, now = Date.now()): Promise
 
   const last14Days = Array.from({ length: 14 }, (_, i) => {
     const day = studyDayKey(studyDayStartDaysAgo(now, 13 - i))
-    return { day, reviews: perDay.get(day) ?? 0 }
+    return { day, reviews: perDay.get(day) ?? 0, again: againPerDay.get(day) ?? 0 }
   })
 
   // ---- Forecast ----

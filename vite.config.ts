@@ -15,19 +15,25 @@ export default defineConfig({
       // Service worker: caches the app's files so it opens without internet.
       // Only active in `npm run build` + `npm run preview`, not in `npm run dev`.
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg'],
+      includeAssets: ['favicon.svg', 'icon-180.png'],
       manifest: {
-        name: 'Flashcards',
-        short_name: 'Flashcards',
+        name: 'Memcard',
+        short_name: 'Memcard',
         start_url: '/',
         display: 'standalone',
-        background_color: '#ffffff',
-        theme_color: '#16a34a',
-        icons: [{ src: 'favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }],
+        orientation: 'portrait',
+        background_color: '#121214',
+        theme_color: '#121214',
+        // PNGs from scripts/make-icons.mjs. The design keeps a safe margin, so it doubles as "maskable".
+        icons: [
+          { src: 'icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          { src: 'icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+        ],
       },
       workbox: {
         // Include the SQLite engine (.wasm) so Anki import works offline too
-        globPatterns: ['**/*.{js,css,html,svg,wasm,webmanifest}'],
+        globPatterns: ['**/*.{js,css,html,svg,png,wasm,webmanifest}'],
         // API data lives in IndexedDB; never serve /api pages from the cache
         navigateFallbackDenylist: [/^\/api\//],
         runtimeCaching: [{
