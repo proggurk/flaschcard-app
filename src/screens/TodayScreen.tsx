@@ -140,7 +140,6 @@ function StudyRow({ summary: s }: { summary: DeckSummary }) {
 function DoneRow({ summary: s }: { summary: DeckSummary }) {
   const nav = useNav()
   const sub = s.total === 0 ? 'No cards yet'
-    : s.newLimitReached ? `New cards done for today · ${s.unseen} left`
     : s.nextDueAt ? `Next card ${formatWhen(s.nextDueAt)}`
     : 'All caught up'
   return (

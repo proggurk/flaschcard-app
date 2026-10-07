@@ -30,72 +30,77 @@ async function makeDeck(cardCount: number) {
   return deckId
 }
 
-// Answer every card in the queue with `rating`, one second apart
-async function studyAll(deckId: string, now: number, rating: Rating = Rating.Know) {
+// Answer the first `count` cards in the queue (one session's worth by default)
+// with `rating`, one second apart
+async function studyAll(deckId: string, now: number, rating: Rating = Rating.Know, count = study.SESSION_SIZE) {
   const { queue } = await study.getStudyQueue(deckId, now)
-  for (const [i, item] of queue.entries()) {
+  const session = queue.slice(0, count)
+  for (const [i, item] of session.entries()) {
     await study.rateCard(item.card.id, rating, now + i * 1000, now + i * 1000 + 500)
   }
-  return queue
+  return session
 }
 
-describe('daily limits', () => {
-  test('a day gives 20 new cards, in deck order', async () => {
+describe('sessions, no daily limit', () => {
+  test('every new card is ready, in deck order', async () => {
     const deckId = await makeDeck(30)
     const { queue } = await study.getStudyQueue(deckId, NOON)
-    expect(queue).toHaveLength(study.NEW_CARDS_PER_DAY)
-    expect(queue.map((c) => c.card.front)).toEqual(Array.from({ length: 20 }, (_, i) => `Q${i}`))
+    expect(queue.map((c) => c.card.front)).toEqual(Array.from({ length: 30 }, (_, i) => `Q${i}`))
   })
 
-  test('after 20 new cards the deck is done for today', async () => {
+  test('after a session of 20 the next new cards are ready straight away', async () => {
     const deckId = await makeDeck(30)
     await studyAll(deckId, NOON)
 
     const later = await study.getStudyQueue(deckId, NOON + 60 * MIN)
-    expect(later.queue).toHaveLength(0)
-    expect(later.newLimitReached).toBe(true)
+    expect(later.queue.map((c) => c.card.front)).toEqual(Array.from({ length: 10 }, (_, i) => `Q${20 + i}`))
 
     const [summary] = await study.getDeckSummaries(NOON + 60 * MIN)
-    expect(summary).toMatchObject({ new: 0, learning: 0, due: 0, unseen: 10, newLimitReached: true })
+    expect(summary).toMatchObject({ new: 10, learning: 0, due: 0 })
+
+    // ...and once they're done too, the deck is caught up
+    await studyAll(deckId, NOON + 61 * MIN)
+    expect((await study.getStudyQueue(deckId, NOON + 62 * MIN)).queue).toHaveLength(0)
   })
 
-  test("cards you don't know stay in the queue until known, without using up the limit", async () => {
+  test("cards you don't know stay first in the queue until you know them", async () => {
     const deckId = await makeDeck(30)
     const { queue } = await study.getStudyQueue(deckId, NOON)
     await study.rateCard(queue[0].card.id, Rating.DontKnow, NOON, NOON + 1000)
 
-    // Still due right away (it counts as one of today's 20 new cards): 1 to retry + 19 new
+    // Still due right away, ahead of the new cards
     const now = await study.getStudyQueue(deckId, NOON + 2000)
     expect(now.queue[0].card.front).toBe('Q0')
-    expect(now.queue).toHaveLength(20)
+    expect(now.queue[0].isNew).toBe(false)
+    expect(now.queue).toHaveLength(30)
 
     // Knowing it finishes it for today: due tomorrow
     await study.rateCard(queue[0].card.id, Rating.Know, NOON + 3000, NOON + 4000)
     const after = await study.getStudyQueue(deckId, NOON + 5000)
     expect(after.queue.map((c) => c.card.front)).not.toContain('Q0')
-    expect(after.queue).toHaveLength(19)
+    expect(after.queue).toHaveLength(29)
     expect((await study.getStudyQueue(deckId, NOON + 1000 + 24 * 60 * MIN)).queue[0].card.front).toBe('Q0')
   })
 
-  test('four days later brings reviews plus the next new cards', async () => {
+  test('four days later: reviews come before the remaining new cards', async () => {
     const deckId = await makeDeck(30)
     await studyAll(deckId, NOON) // 20 new cards answered "Know" => due in 4 days
 
     expect((await study.getStudyQueue(deckId, NOON + 3 * DAY)).queue.filter((c) => !c.isNew)).toHaveLength(0)
     const { queue } = await study.getStudyQueue(deckId, NOON + 4 * DAY)
-    const reviews = queue.filter((c) => !c.isNew)
-    const fresh = queue.filter((c) => c.isNew)
-    expect(reviews).toHaveLength(20)
-    expect(fresh.map((c) => c.card.front)).toEqual(Array.from({ length: 10 }, (_, i) => `Q${20 + i}`))
+    expect(queue.slice(0, 20).every((c) => !c.isNew)).toBe(true)
+    expect(queue.slice(20).map((c) => c.card.front)).toEqual(Array.from({ length: 10 }, (_, i) => `Q${20 + i}`))
   })
 
-  test('a study day starts at 4 am, like Anki', async () => {
-    const deckId = await makeDeck(30)
+  test('a study day starts at 4 am, like Anki: a review is due all of its day', async () => {
+    const deckId = await makeDeck(5)
     const lateNight = new Date(2026, 0, 10, 23, 0).getTime()
-    await studyAll(deckId, lateNight)
-    // 3 am the next calendar day is still the same study day: no new cards
-    const threeAm = new Date(2026, 0, 11, 3, 0).getTime()
-    expect((await study.getStudyQueue(deckId, threeAm)).queue.filter((c) => c.isNew)).toHaveLength(0)
+    await studyAll(deckId, lateNight) // due in 4 days: Jan 14 at 23:00
+    const reviews = (t: number) => study.getStudyQueue(deckId, t).then((q) => q.queue.length)
+    // 3 am on the 14th still belongs to the 13th's study day
+    expect(await reviews(new Date(2026, 0, 14, 3, 0).getTime())).toBe(0)
+    // From 4 am on the 14th they're due, long before 23:00
+    expect(await reviews(new Date(2026, 0, 14, 4, 30).getTime())).toBe(5)
   })
 })
 

@@ -22,8 +22,9 @@ const dayTitle = (key: string) => dayDate(key).toLocaleDateString('en-GB', { wee
 async function loadStats(deckId: string | null) {
   const [stats, exams, summaries] = await Promise.all([getStats(deckId), getExamHistory(deckId), getDeckSummaries()])
   const relevant = summaries.filter((s) => deckId === null || s.deck.id === deckId)
-  const remaining = relevant.reduce((n, s) => n + s.new + s.learning + s.due, 0)
-  return { stats, exams, remaining, decks: summaries.map((s) => s.deck) }
+  // Reviews still waiting today (new cards have no daily goal: study as many as you like)
+  const reviewsLeft = relevant.reduce((n, s) => n + s.learning + s.due, 0)
+  return { stats, exams, reviewsLeft, decks: summaries.map((s) => s.deck) }
 }
 
 // deckId = null: all decks, with a picker (the Stats tab). Otherwise one deck (pushed from it).
@@ -40,7 +41,7 @@ export default function StatsScreen({ deckId, title, back }: { deckId: string | 
   )
 
   if (!data) return <Screen title={title} back={back}>{null}</Screen>
-  const { stats, exams, remaining } = data
+  const { stats, exams, reviewsLeft } = data
   const { today, cards } = stats
   const nothingYet = cards.total === 0
 
@@ -54,7 +55,8 @@ export default function StatsScreen({ deckId, title, back }: { deckId: string | 
     title: i === 0 ? 'Today, including overdue' : dayTitle(d.day),
     values: [d.cards],
   }))
-  const plannedToday = today.cards + remaining
+  const reviewed = today.cards - today.newCards
+  const reviewsToday = reviewed + reviewsLeft
 
   return (
     <Screen title={title} back={back}>
@@ -67,7 +69,7 @@ export default function StatsScreen({ deckId, title, back }: { deckId: string | 
           <Section title="Today">
             <div className="card">
               <Rings rings={[
-                { label: 'Studied', value: plannedToday ? today.cards / plannedToday : null, display: `${today.cards}/${plannedToday}`, color: 'var(--chart-1)' },
+                { label: 'Reviews', value: reviewsToday ? reviewed / reviewsToday : null, display: reviewsToday ? `${reviewed}/${reviewsToday}` : '–', color: 'var(--chart-1)' },
                 { label: 'Correct', value: today.correctRate, display: pct(today.correctRate), color: 'var(--chart-2)' },
                 { label: 'Retention 30d', value: stats.retention30d, display: pct(stats.retention30d), color: 'var(--chart-3)' },
               ]} />

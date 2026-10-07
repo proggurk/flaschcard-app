@@ -5,10 +5,9 @@ import { DAY_MS, studyDayStart } from './days.ts'
 import { schedule, newCardState, type CardState, type Rating } from '../../shared/srs.ts'
 import type { SyncCard, SyncDeck, SyncDeckUpload, SyncProgress } from '../../shared/sync-types.ts'
 
-// Same defaults as Anki. Cards you're re-learning (answered "Don't know") don't count
-// towards either limit: they always come back the same day.
-export const NEW_CARDS_PER_DAY = 20
-export const REVIEWS_PER_DAY = 200
+// No daily limits: you can study as much as you like. Studying happens in
+// sessions of this many cards; afterwards you can start another one.
+export const SESSION_SIZE = 20
 
 export interface StudyCard {
   card: SyncCard
@@ -19,11 +18,9 @@ export interface StudyCard {
 export interface DeckSummary {
   deck: SyncDeck
   total: number
-  new: number      // new cards you can still start today
+  new: number      // never studied
   learning: number // answered "Don't know", due again now
-  due: number      // reviews due now (within today's limit)
-  unseen: number   // new cards never studied, ignoring the daily limit
-  newLimitReached: boolean
+  due: number      // reviews due now
   nextDueAt: number | null // when the next not-yet-due card becomes due
 }
 
@@ -36,24 +33,6 @@ export function toState(p: SyncProgress): CardState {
     lapses: p.lapses,
     lastReviewedAt: p.lastReviewedAt,
   }
-}
-
-// How many new cards / reviews of this deck were already done today
-async function doneToday(cardIds: Set<string>, now: number) {
-  const db = await getDB()
-  const dayStart = studyDayStart(now)
-  const today = await db.getAllFromIndex('reviews', 'byTime', IDBKeyRange.lowerBound(dayStart))
-  const cardsToday = new Set(today.filter((r) => cardIds.has(r.cardId)).map((r) => r.cardId))
-
-  let newCards = 0
-  let reviews = 0
-  for (const cardId of cardsToday) {
-    const history = await db.getAllFromIndex('reviews', 'byCard', cardId)
-    // First ever seen today => it was a new card today
-    if (history.some((r) => r.reviewedAt < dayStart)) reviews++
-    else newCards++
-  }
-  return { newCards, reviews }
 }
 
 async function loadDeck(deckId: string, now: number) {
@@ -88,28 +67,16 @@ async function loadDeck(deckId: string, now: number) {
   learning.sort((a, b) => a.state.dueAt - b.state.dueAt)
   reviews.sort((a, b) => a.state.dueAt - b.state.dueAt)
 
-  const done = await doneToday(new Set(cards.map((c) => c.id)), now)
-  const newLeft = Math.max(0, NEW_CARDS_PER_DAY - done.newCards)
-  const reviewsLeft = Math.max(0, REVIEWS_PER_DAY - done.reviews)
-
-  return {
-    total: cards.length,
-    learning,
-    reviews: reviews.slice(0, reviewsLeft),
-    fresh: fresh.slice(0, newLeft),
-    unseen: fresh.length,
-    newLimitReached: newLeft === 0 && fresh.length > 0,
-    nextDueAt,
-  }
+  return { total: cards.length, learning, reviews, fresh, nextDueAt }
 }
 
-// Cards to study now: re-learning cards, then reviews, then today's new cards.
+// Every card you could study now, in order: cards you didn't know, then
+// reviews, then new cards. A study session takes the first SESSION_SIZE.
 export async function getStudyQueue(deckId: string, now = Date.now()) {
   const d = await loadDeck(deckId, now)
   return {
     queue: [...d.learning, ...d.reviews, ...d.fresh],
     nextDueAt: d.nextDueAt,
-    newLimitReached: d.newLimitReached,
   }
 }
 
@@ -128,8 +95,6 @@ export async function getDeckSummaries(now = Date.now()): Promise<DeckSummary[]>
       new: d.fresh.length,
       learning: d.learning.length,
       due: d.reviews.length,
-      unseen: d.unseen,
-      newLimitReached: d.newLimitReached,
       nextDueAt: d.nextDueAt,
     }
   }))

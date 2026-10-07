@@ -1,4 +1,4 @@
-import { getDeckSummaries } from '../lib/study.ts'
+import { getDeckSummaries, SESSION_SIZE } from '../lib/study.ts'
 import { getStats } from '../lib/stats.ts'
 import { formatWhen } from '../lib/format.ts'
 import { useNav } from '../ui/nav.ts'
@@ -39,14 +39,13 @@ export default function DeckScreen({ deckId, back }: { deckId: string, back: str
           <div className="pad" style={{ marginTop: 16 }}>
             <button className="btn btn-primary" disabled={toStudy === 0}
               onClick={() => nav.push({ screen: 'study', deckId })}>
-              {toStudy > 0 ? `Study now · ${toStudy} ${toStudy === 1 ? 'card' : 'cards'}` : 'All done for now'}
+              {toStudy > 0 ? `Study ${Math.min(SESSION_SIZE, toStudy)} ${toStudy === 1 ? 'card' : 'cards'}` : 'All done for now'}
             </button>
-            {toStudy === 0 && (
-              <p className="section-footer" style={{ textAlign: 'center', padding: '8px 0 0' }}>
-                {s.newLimitReached ? "You've had today's new cards. More tomorrow!"
-                  : s.nextDueAt ? `Next card is due ${formatWhen(s.nextDueAt)}.` : 'Nothing to study in this deck.'}
-              </p>
-            )}
+            <p className="section-footer" style={{ textAlign: 'center', padding: '8px 0 0' }}>
+              {toStudy > SESSION_SIZE ? `${toStudy} cards ready. You study ${SESSION_SIZE} at a time, as many rounds as you like.`
+                : toStudy > 0 ? null
+                : s.nextDueAt ? `Next card is due ${formatWhen(s.nextDueAt)}.` : 'Nothing to study in this deck.'}
+            </p>
           </div>
 
           <Section title="Progress">

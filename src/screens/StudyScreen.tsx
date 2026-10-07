@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { getStudyQueue, rateCard, NEW_CARDS_PER_DAY, type StudyCard } from '../lib/study.ts'
+import { getStudyQueue, rateCard, SESSION_SIZE, type StudyCard } from '../lib/study.ts'
 import { schedule, Rating } from '../../shared/srs.ts'
 import { formatInterval, formatWhen } from '../lib/format.ts'
 import CardHtml from '../components/CardHtml.tsx'
@@ -21,7 +21,21 @@ export default function StudyScreen({ deckId }: { deckId: string }) {
   const [missedAt, setMissedAt] = useState<Record<string, number>>({})
   const [finished, setFinished] = useState<string[]>([])
 
-  const session = useLoad(async () => ({ ...(await getStudyQueue(deckId)), round, shownAt: Date.now() }), [deckId, round])
+  // The session's cards are picked when it starts: the first SESSION_SIZE ready
+  // now. Known cards drop out; missed ones stay until you know them.
+  const sessionIds = useRef<Set<string> | null>(null)
+  const session = useLoad(async () => {
+    const { queue, nextDueAt } = await getStudyQueue(deckId)
+    sessionIds.current ??= new Set(queue.slice(0, SESSION_SIZE).map((c) => c.card.id))
+    const ids = sessionIds.current
+    return {
+      queue: queue.filter((c) => ids.has(c.card.id)),
+      more: queue.filter((c) => !ids.has(c.card.id)).length, // ready for another session
+      nextDueAt,
+      round,
+      shownAt: Date.now(),
+    }
+  }, [deckId, round])
 
   const current = session && pickNext(session.queue, missedAt, answered)
   // The card stays flipped until the next one has loaded, so the next card's
@@ -46,6 +60,14 @@ export default function StudyScreen({ deckId }: { deckId: string }) {
   // Once the answer shows: swipe right = know, left = don't know. The buttons
   // and keys send the card off the same way.
   const swipe = useRef<SwipeControls>(null)
+
+  function studyMore() {
+    sessionIds.current = null
+    setMissedAt({})
+    setFinished([])
+    setAnswered(0)
+    setRound((r) => r + 1)
+  }
 
   // Keyboard: space/enter flips; then 1 or ← = don't know, 2 or → = know; escape closes
   useEffect(() => {
@@ -127,14 +149,24 @@ export default function StudyScreen({ deckId }: { deckId: string }) {
       {session && !current && (
         <div className="done">
           <div className="done-badge"><Icon name="check" size={48} weight={3} /></div>
-          <h2 style={{ fontSize: 28, fontWeight: 700 }}>All done for now!</h2>
+          <h2 style={{ fontSize: 28, fontWeight: 700 }}>{session.more > 0 ? 'Session done!' : 'All done for now!'}</h2>
           <p className="empty-text">
             {finished.length > 0 && `You went through ${finished.length} ${finished.length === 1 ? 'card' : 'cards'}`}
             {finished.length > 0 && (neededRetry > 0 ? `, ${neededRetry} of them took another try. ` : ', and knew every one. ')}
-            {session.newLimitReached && `You've had today's ${NEW_CARDS_PER_DAY} new cards. `}
-            {session.nextDueAt && `Next card is due ${formatWhen(session.nextDueAt)}.`}
+            {session.more > 0
+              ? `${session.more} more ${session.more === 1 ? 'card is' : 'cards are'} ready.`
+              : session.nextDueAt && `Next card is due ${formatWhen(session.nextDueAt)}.`}
           </p>
-          <button className="btn btn-primary" style={{ marginTop: 24, maxWidth: 280 }} onClick={nav.back}>Done</button>
+          {session.more > 0 ? (
+            <div style={{ width: '100%', maxWidth: 280, marginTop: 24 }}>
+              <button className="btn btn-primary" onClick={studyMore}>
+                Study {Math.min(SESSION_SIZE, session.more)} more
+              </button>
+              <button className="btn btn-plain" style={{ marginTop: 8 }} onClick={nav.back}>Done for now</button>
+            </div>
+          ) : (
+            <button className="btn btn-primary" style={{ marginTop: 24, maxWidth: 280 }} onClick={nav.back}>Done</button>
+          )}
         </div>
       )}
     </div>
