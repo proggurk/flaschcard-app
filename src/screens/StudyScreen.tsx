@@ -15,7 +15,8 @@ const REPEAT_AFTER = 3
 export default function StudyScreen({ deckId }: { deckId: string }) {
   const nav = useNav()
   const [round, setRound] = useState(0) // bumped after each answer to reload the queue
-  const [flippedRound, setFlippedRound] = useState<number | null>(null)
+  const [flippedKey, setFlippedKey] = useState<string | null>(null) // "round:cardId" of the flipped card
+  const [answeredCard, setAnsweredCard] = useState<StudyCard | null>(null)
   const [answered, setAnswered] = useState(0)
   // This session: when each card was last not known (answer number), and which cards are done
   const [missedAt, setMissedAt] = useState<Record<string, number>>({})
@@ -37,20 +38,24 @@ export default function StudyScreen({ deckId }: { deckId: string }) {
     }
   }, [deckId, round])
 
-  const current = session && pickNext(session.queue, missedAt, answered)
-  // The card stays flipped until the next one has loaded, so the next card's
-  // answer never shows during the flip-back animation
-  const flipped = session !== undefined && flippedRound === session.round
-  const busy = session?.round !== round
+  const busy = session?.round !== round // answered; the next card is still loading
+  // Until the next card has loaded, keep showing the one just answered. Picking
+  // from the old queue in between could land on another card while the flip is
+  // still on, and show that card's answer for a moment.
+  const current = busy && answeredCard ? answeredCard : session && pickNext(session.queue, missedAt, answered)
+  // Flipped belongs to one card in one round, so it can never carry over to another card
+  const flipped = session !== undefined && current !== undefined &&
+    flippedKey === `${session.round}:${current.card.id}`
 
   function flip() {
-    if (session && !busy) setFlippedRound(flipped ? null : session.round)
+    if (session && current && !busy) setFlippedKey(flipped ? null : `${session.round}:${current.card.id}`)
   }
 
   async function answer(rating: Rating) {
     if (!session || !current || busy) return
     const id = current.card.id
     await rateCard(id, rating, session.shownAt)
+    setAnsweredCard(current)
     if (rating === Rating.DontKnow) setMissedAt((m) => ({ ...m, [id]: answered + 1 }))
     else setFinished((f) => (f.includes(id) ? f : [...f, id]))
     setAnswered((n) => n + 1)
@@ -81,6 +86,10 @@ export default function StudyScreen({ deckId }: { deckId: string }) {
     return () => window.removeEventListener('keydown', onKey)
   })
 
+  // Mature cards are asked the other way round: the answer side becomes the question
+  const prompt = current ? (current.reversed ? current.card.back : current.card.front) : ''
+  const reply = current ? (current.reversed ? current.card.front : current.card.back) : ''
+
   const remaining = session?.queue.length ?? 0
   const progress = finished.length + remaining === 0 ? 1 : finished.length / (finished.length + remaining)
   const neededRetry = Object.keys(missedAt).length
@@ -107,19 +116,23 @@ export default function StudyScreen({ deckId }: { deckId: string }) {
                 role="button" aria-label={flipped ? 'Answer side. Tap to see the question' : 'Tap to show the answer'}>
                 <div className="face">
                   <span className="face-label">
-                    {current.isNew ? 'New card' : missedAt[current.card.id] !== undefined ? 'Try again' : 'Question'}
+                    {current.isNew ? 'New card' : missedAt[current.card.id] !== undefined ? 'Try again'
+                      : current.reversed ? 'Reversed' : 'Question'}
                   </span>
-                  <CardHtml html={current.card.front} />
-                  {!flipped && <p className="tap-hint">Tap to show the answer</p>}
+                  <CardHtml html={prompt} />
+                  {!flipped && (
+                    <p className="tap-hint">{current.reversed ? 'You know this one well, so now the other way round. ' : ''}Tap to show the answer</p>
+                  )}
                 </div>
                 <div className="face back">
                   <span className="face-label">Answer</span>
                   {/* Only rendered once flipped, so audio on the answer doesn't give it away.
-                      Anki answers usually repeat the question ({{FrontSide}}); our own cards don't, so add it. */}
-                  {flipped && current.card.ankiNoteId === null && (
-                    <><div className="face-question"><CardHtml html={current.card.front} /></div><hr className="face-divider" /></>
+                      The question is repeated small above it (imported Anki answers leave it out),
+                      unless the answer already contains it (some Anki templates). */}
+                  {flipped && !reply.includes(prompt) && (
+                    <><div className="face-question"><CardHtml html={prompt} /></div><hr className="face-divider" /></>
                   )}
-                  {flipped && <CardHtml html={current.card.back} />}
+                  {flipped && <CardHtml html={reply} />}
                   {flipped && answered < 3 && <p className="tap-hint">Swipe right if you knew it, left if you didn't</p>}
                 </div>
               </div>

@@ -4,6 +4,7 @@ import { syncSoon } from './sync.ts'
 import { DAY_MS, studyDayStart } from './days.ts'
 import { schedule, newCardState, type CardState, type Rating } from '../../shared/srs.ts'
 import type { SyncCard, SyncDeck, SyncDeckUpload, SyncProgress } from '../../shared/sync-types.ts'
+import { isReversed, notesWithSiblings } from './reverse.ts'
 
 // No daily limits: you can study as much as you like. Studying happens in
 // sessions of this many cards; afterwards you can start another one.
@@ -13,6 +14,7 @@ export interface StudyCard {
   card: SyncCard
   state: CardState
   isNew: boolean
+  reversed: boolean // mature: asked the other way round (answer side first)
 }
 
 export interface DeckSummary {
@@ -45,16 +47,18 @@ async function loadDeck(deckId: string, now: number) {
   // Like Anki, a review card scheduled for some day is due all that day, not
   // from the exact minute. Re-learning cards ("Don't know") use the exact time.
   const endOfToday = studyDayStart(now) + DAY_MS
+  const siblings = notesWithSiblings(cards)
 
   for (const card of cards) {
     const p = await db.get('progress', card.id)
     if (!p) {
-      fresh.push({ card, state: newCardState(now), isNew: true })
+      fresh.push({ card, state: newCardState(now), isNew: true, reversed: false })
       continue
     }
     const isLearning = p.intervalDays === 0
     if (p.dueAt <= (isLearning ? now : endOfToday)) {
-      (isLearning ? learning : reviews).push({ card, state: toState(p), isNew: false })
+      const state = toState(p)
+      ;(isLearning ? learning : reviews).push({ card, state, isNew: false, reversed: isReversed(card, state, siblings) })
     } else {
       const becomesDue = isLearning ? p.dueAt : studyDayStart(p.dueAt)
       if (nextDueAt === null || becomesDue < nextDueAt) nextDueAt = becomesDue

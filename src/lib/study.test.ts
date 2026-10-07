@@ -10,6 +10,7 @@ vi.mock('./sync.ts', () => ({ syncSoon: () => {} })) // no network in tests
 let study: typeof import('./study.ts')
 let stats: typeof import('./stats.ts')
 let exam: typeof import('./exam.ts')
+let reverse: typeof import('./reverse.ts')
 
 beforeEach(async () => {
   globalThis.indexedDB = new IDBFactory() // fresh empty database per test
@@ -17,6 +18,7 @@ beforeEach(async () => {
   study = await import('./study.ts')
   stats = await import('./stats.ts')
   exam = await import('./exam.ts')
+  reverse = await import('./reverse.ts')
 })
 
 const NOON = new Date(2026, 0, 10, 12, 0).getTime() // local noon, well inside a study day
@@ -196,5 +198,46 @@ describe('exams', () => {
     const after = await db.get('progress', q.card.id)
     expect(after!.intervalDays).toBe(0) // back in learning
     expect(after!.lapses).toBe(before!.lapses + 1)
+  })
+})
+
+describe('reversed cards', () => {
+  // One card, always known: 4, then 10, then 25 days (mature from 21)
+  test('a card is asked the other way round once it is mature', async () => {
+    const deckId = await makeDeck(1)
+    const first = async (t: number) => (await study.getStudyQueue(deckId, t)).queue[0]
+    await studyAll(deckId, NOON)
+    expect((await first(NOON + 4 * DAY)).reversed).toBe(false) // interval 4
+    await studyAll(deckId, NOON + 4 * DAY)
+    expect((await first(NOON + 14 * DAY)).reversed).toBe(false) // interval 10
+    await studyAll(deckId, NOON + 14 * DAY)
+    expect((await first(NOON + 39 * DAY)).reversed).toBe(true) // interval 25: mature
+  })
+
+  test("not knowing it reversed sends it back to the normal direction", async () => {
+    const deckId = await makeDeck(1)
+    for (const day of [0, 4, 14]) await studyAll(deckId, NOON + day * DAY)
+    await studyAll(deckId, NOON + 39 * DAY, Rating.DontKnow)
+    const [again] = (await study.getStudyQueue(deckId, NOON + 39 * DAY + MIN)).queue
+    expect(again.reversed).toBe(false)
+  })
+
+  test('cloze cards, notes with their own reverse card and empty answers are never reversed', () => {
+    const card = (front: string, back: string, ankiNoteId: string | null = null) =>
+      ({ id: crypto.randomUUID(), deckId: 'd', front, back, ankiNoteId, position: 0 })
+    const normal = card('hola', 'hello', 'abc:0')
+    const cloze = card('The <span class="cloze">[...]</span> is red', 'The <span class="cloze">apple</span> is red', 'c:l:0')
+    // Anki's "Basic (and reversed card)": two cards from one note (the guid may contain ':')
+    const forward = card('perro', 'dog', 'g:u:id:0')
+    const backward = card('dog', 'perro', 'g:u:id:1')
+    const siblings = reverse.notesWithSiblings([normal, cloze, forward, backward])
+
+    expect(reverse.canReverse(normal, siblings)).toBe(true)
+    expect(reverse.canReverse(card('hola', 'hello'), siblings)).toBe(true) // made in the app
+    expect(reverse.canReverse(cloze, siblings)).toBe(false)
+    expect(reverse.canReverse(forward, siblings)).toBe(false)
+    expect(reverse.canReverse(backward, siblings)).toBe(false)
+    expect(reverse.canReverse(card('hola', ' <br> &nbsp;'), siblings)).toBe(false)
+    expect(reverse.canReverse(card('hola', '<img src="/api/media/x.png">'), siblings)).toBe(true) // a picture works as a question
   })
 })
